@@ -5,20 +5,19 @@ import chalk from "chalk";
 // 1. 环境变量与追踪设置 (Bun 原生支持 .env，无需 dotenv 包)
 // ─────────────────────────────────────────────────────────────
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const LANGCHAIN_API_KEY = process.env.LANGCHAIN_API_KEY;
+const LANGSMITH_API_KEY = process.env.LANGSMITH_API_KEY;
 
 if (!OPENAI_API_KEY) {
   console.error(chalk.red("❌ 未找到 OPENAI_API_KEY。请创建 .env 文件并设置。"));
   process.exit(1);
 }
-if (!LANGCHAIN_API_KEY) {
-  console.warn(chalk.yellow("⚠️ 未找到 LANGCHAIN_API_KEY。LangSmith 追踪将不可用。"));
+if (!LANGSMITH_API_KEY) {
+  console.warn(chalk.yellow("⚠️ 未找到 LANGSMITH_API_KEY。LangSmith 追踪将不可用。"));
 }
 
 // LangSmith 追踪配置
-process.env.LANGCHAIN_TRACING_V2 = "true";
-process.env.LANGCHAIN_PROJECT = "Agentic Architecture - Reflection (Nebius)";
-if (LANGCHAIN_API_KEY) process.env.LANGCHAIN_API_KEY = LANGCHAIN_API_KEY;
+process.env.LANGCHAIN_PROJECT = "Agentic Architecture - Reflection";
+if (LANGSMITH_API_KEY) process.env.LANGSMITH_API_KEY = LANGSMITH_API_KEY;
 
 console.log(chalk.green("✅ 环境变量已加载，追踪设置完毕。"));
 
@@ -49,9 +48,6 @@ import { ChatOpenAI } from "@langchain/openai";
 const llm = new ChatOpenAI({
   modelName: "deepseek-ai/DeepSeek-V4-Flash", // 这里替换为魔搭支持的模型
   temperature: 0.2,
-  configuration: {
-    baseURL: process.env.OPENAI_API_BASE,
-  },
 });
 
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";

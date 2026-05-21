@@ -32,9 +32,7 @@
 
 ## 阶段 0：基础与设置
 
-我们将从标准的设置过程开始：安装依赖库并配置 API 密钥（Nebius、LangSmith 和我们的 Tavily 网络搜索工具）。
-
-*注：在 JavaScript/TypeScript 生态中，由于目前没有专门的 `langchain-nebius` 包，并且 Nebius API 兼容 OpenAI 格式，我们将使用 `@langchain/openai` 包并配置 Nebius 的 Base URL 来进行调用。*
+我们将从标准的设置过程开始：安装依赖库并配置 API 密钥（LangSmith 和我们的 Tavily 网络搜索工具）。
 
 ### 步骤 0.1：安装核心库
 
@@ -42,7 +40,7 @@
 我们将使用 Bun 安装本项目系列所需的标准库套件。
 
 ```bash
-bun add @langchain/core @langchain/openai @langchain/community @langchain/langgraph zod
+bun add @langchain/openai @langchain/tavily @langchain/langgraph zod
 ```
 
 ### 步骤 0.2：导入库并设置密钥
@@ -52,14 +50,16 @@ bun add @langchain/core @langchain/openai @langchain/community @langchain/langgr
 
 **需要采取的行动：** 在此目录下创建一个 `.env` 文件并填入你的密钥：
 ```env
-NEBIUS_API_KEY="your_nebius_api_key_here"
-LANGCHAIN_API_KEY="your_langsmith_api_key_here"
-TAVILY_API_KEY="your_tavily_api_key_here"
+OPENAI_BASE_URL=https://api-inference.modelscope.cn/v1
+OPENAI_API_KEY="YOUR_NEBIUS_API"
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY="your_langsmith_api_key_here" 
+TAVILY_API_KEY="YOUR_TAVILY_API"
 ```
 
 ```typescript
 import { ChatOpenAI } from "@langchain/openai";
-import { TavilySearchResults } from "@langchain/community/tools/tavily_search";
+import { TavilySearch } from "@langchain/tavily";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { StateGraph, END, MessagesAnnotation } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
@@ -67,10 +67,9 @@ import { z } from "zod";
 
 // --- API 密钥和 Tracing 设置 ---
 // Bun 会自动加载 .env 文件，但我们需要设置 LangSmith 的环境变量
-process.env.LANGCHAIN_TRACING_V2 = "true";
-process.env.LANGCHAIN_PROJECT = "Agentic Architecture - ReAct (Nebius TS)";
+process.env.LANGCHAIN_PROJECT = "Agentic Architecture - ReAct";
 
-const requiredKeys = ["NEBIUS_API_KEY", "LANGCHAIN_API_KEY", "TAVILY_API_KEY"];
+const requiredKeys = ["OPENAI_BASE_URL", "OPENAI_API_KEY", "LANGCHAIN_API_KEY", "TAVILY_API_KEY"];
 for (const key of requiredKeys) {
   if (!process.env[key]) {
     console.warn(`未找到 ${key}。请在 .env 文件中进行设置。`);
@@ -93,14 +92,9 @@ console.log("环境变量已加载，Tracing 设置完毕。");
 // 定义工具和 LLM
 const searchTool = new TavilySearchResults({ maxResults: 2, name: "web_search" });
 
-// 使用 ChatOpenAI 配合 Nebius 的端点
 const llm = new ChatOpenAI({
-  modelName: "meta-llama/Meta-Llama-3.1-8B-Instruct",
-  temperature: 0,
-  configuration: {
-    baseURL: "https://api.studio.nebius.ai/v1/",
-    apiKey: process.env.NEBIUS_API_KEY,
-  }
+  modelName: "deepseek-ai/DeepSeek-V4-Flash", // 这里替换为魔搭支持的模型
+  temperature: 0.2,
 });
 
 const llmWithTools = llm.bindTools([searchTool]);
