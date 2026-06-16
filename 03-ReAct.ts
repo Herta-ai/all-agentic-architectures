@@ -1,6 +1,6 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { TavilySearch } from "@langchain/tavily";
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages";
 import { StateGraph, END, MessagesAnnotation } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import { z } from "zod";
@@ -22,7 +22,7 @@ console.log("环境变量已加载，Tracing 设置完毕。");
 const searchTool = new TavilySearch({ maxResults: 2, name: "web_search", tavilyApiKey: process.env.TAVILY_API_KEY, });
 
 const llm = new ChatOpenAI({
-  modelName: "deepseek-ai/DeepSeek-V4-Pro", // 这里替换为魔搭支持的模型
+  model: "deepseek-ai/DeepSeek-V4-Pro", // 这里替换为魔搭支持的模型
   temperature: 0.2,
 });
 
@@ -65,7 +65,7 @@ for await (const chunk of stream) {
   console.log("--- 当前状态 ---");
   const lastMsg = chunk.messages[chunk.messages.length - 1];
   console.log(`[${lastMsg!.type}]`, lastMsg!.content || "(Tool Call / Empty Content)");
-  if (lastMsg!.tool_calls && lastMsg!.tool_calls.length > 0) {
+  if (AIMessage.isInstance(lastMsg) && lastMsg!.tool_calls && lastMsg!.tool_calls.length > 0) {
     console.log("工具调用:", JSON.stringify(lastMsg!.tool_calls, null, 2));
   }
   console.log("\n");
@@ -117,10 +117,10 @@ async function basicAgentNode(state: typeof MessagesAnnotation.State) {
   const systemPrompt = new SystemMessage(
     "你是一个有用的助手。你可以使用网络搜索工具。请根据工具的结果回答用户的问题。你必须在一次工具调用后提供最终答案。"
   );
-  
+
   const messages = [systemPrompt, ...state.messages];
   const response = await llmWithTools.invoke(messages);
-  
+
   return { messages: [response] };
 }
 

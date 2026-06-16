@@ -28,67 +28,7 @@
 
 ## 第 0 阶段：基础和设置
 
-我们将从标准设置过程开始：安装依赖并为 Nebius、LangSmith 和我们的 Tavily 网络搜索工具配置 API 密钥。
-
-### 步骤 0.1：安装核心依赖 (Bun)
-
-**我们将要做什么：**
-我们使用 Bun 安装所需的库，包括 `@langchain/core`，`@langchain/langgraph`，`@langchain/openai` (用于连接兼容 OpenAI API 的 Nebius)，以及相关的工具包。
-
-在终端中运行以下命令：
-```bash
-bun add @langchain/core @langchain/langgraph @langchain/openai @langchain/community zod dotenv chalk
-```
-
-### 步骤 0.2：导入库和设置密钥
-
-**我们将要做什么：**
-我们将导入必要的模块并从 `.env` 文件加载我们的 API 密钥。
-
-**需要采取的行动：** 在当前目录下创建一个 `.env` 文件，包含以下密钥：
-```env
-OPENAI_BASE_URL=https://api-inference.modelscope.cn/v1
-OPENAI_API_KEY="YOUR_NEBIUS_API"
-LANGSMITH_TRACING=true
-LANGSMITH_API_KEY="your_langsmith_api_key_here" 
-TAVILY_API_KEY="YOUR_TAVILY_API"
-LANGCHAIN_PROJECT="Agentic Architecture - Planning"
-```
-
-```typescript
-import { z } from "zod";
-import * as dotenv from "dotenv";
-import chalk from "chalk";
-
-// LangChain 组件
-import { ChatOpenAI } from "@langchain/openai";
-import { SystemMessage, ToolMessage, BaseMessage } from "@langchain/core/messages";
-import { tool } from "@langchain/core/tools";
-import { TavilySearchResults } from "@langchain/community/tools/tavily_search";
-
-// LangGraph 组件
-import { 
-  StateGraph, 
-  MessagesAnnotation, 
-  Annotation, 
-  START, 
-  END 
-} from "@langchain/langgraph";
-import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
-
-// --- API 密钥和追踪设置 ---
-dotenv.config();
-
-// 检查密钥是否设置
-const requiredKeys = ["NEBIUS_API_KEY", "LANGCHAIN_API_KEY", "TAVILY_API_KEY"];
-for (const key of requiredKeys) {
-  if (!process.env[key]) {
-    console.warn(chalk.red(`${key} 未找到。请创建 .env 文件并设置它。`));
-  }
-}
-
-console.log(chalk.green("环境变量已加载，LangSmith 追踪已设置。"));
-```
+> 参考上一篇
 
 ## 第 1 阶段：基线 - 反应式 Agent (ReAct)
 
@@ -100,38 +40,23 @@ console.log(chalk.green("环境变量已加载，LangSmith 追踪已设置。"))
 我们将快速重建 ReAct Agent。它的核心特征是一个循环，Agent 在每次工具调用后，其输出都会被路由回自身，从而使其能够根据最新信息重新评估并决定下一步行动。
 
 ```typescript
-// 1. 定义基础的 Tavily 搜索工具
-const tavilySearchTool = new TavilySearchResults({ maxResults: 2 });
+// 定义工具和 LLM
+const searchTool = new TavilySearch({
+  maxResults: 2,
+  name: 'web_search',
+  description: '使用 Tavily 执行网络搜索并将结果作为字符串返回。',
+  tavilyApiKey: process.env.TAVILY_API_KEY,
+})
 
-// 2. 自定义工具：使用 @langchain/core/tools 的 `tool` 函数封装它
-const webSearch = tool(
-  async ({ query }) => {
-    console.log(chalk.blue(`--- 工具: 正在搜索 '${query}'...`));
-    const results = await tavilySearchTool.invoke(query);
-    // 返回字符串格式以保持与原始 Python 代码类似的行为
-    return typeof results === 'string' ? results : JSON.stringify(results);
-  },
-  {
-    name: "web_search",
-    description: "使用 Tavily 执行网络搜索并将结果作为字符串返回。",
-    schema: z.object({ query: z.string() }),
-  }
-);
-
-// 3. 定义 LLM 并将其与我们的自定义工具绑定
-// Nebius AI 兼容 OpenAI 的 API 格式，所以我们使用 ChatOpenAI 并指定 baseURL
 const llm = new ChatOpenAI({
-  modelName: "meta-llama/Meta-Llama-3.1-8B-Instruct",
-  temperature: 0,
-  openAIApiKey: process.env.NEBIUS_API_KEY,
-  configuration: {
-    baseURL: "https://api.studio.nebius.ai/v1/",
-  },
-});
+  model: 'deepseek-v4-flash', // 这里替换为魔搭支持的模型
+  temperature: 0.2,
+})
 
-const llmWithTools = llm.bindTools([webSearch]);
+const llmWithTools = llm.bindTools([searchTool])
 
-// 4. Agent 节点，带有一个系统提示词来强制一次仅调用一个工具
+
+// Agent 节点，带有一个系统提示词来强制一次仅调用一个工具
 const reactAgentNode = async (state: typeof MessagesAnnotation.State) => {
   console.log(chalk.cyan("--- 反应式代理 (REACT): 思考中... ---"));
   
@@ -143,14 +68,14 @@ const reactAgentNode = async (state: typeof MessagesAnnotation.State) => {
   return { messages: [response] };
 };
 
-// 5. 将我们修正后的自定义工具放入 ToolNode
-const toolNode = new ToolNode([webSearch]);
+// 将我们修正后的自定义工具放入 ToolNode
+const toolNode = new ToolNode([searchTool]);
 
 // 构建带有典型循环特征的 ReAct 图
 const reactGraphBuilder = new StateGraph(MessagesAnnotation)
   .addNode("agent", reactAgentNode)
   .addNode("tools", toolNode)
-  .addEdge(START, "agent")
+  .addEdge("__start__", "agent")
   .addConditionalEdges("agent", toolsCondition)
   .addEdge("tools", "agent");
 
@@ -240,7 +165,9 @@ const PlanningStateAnnotation = Annotation.Root({
 // 3. 计划员节点
 const plannerNode = async (state: typeof PlanningStateAnnotation.State) => {
   console.log(chalk.cyan("--- 计划员 (PLANNER): 正在分解任务... ---"));
-  const plannerLlm = llm.withStructuredOutput(PlanSchema);
+  const plannerLlm = llm.withStructuredOutput(PlanSchema, {
+    method: "jsonMode", 
+  });
   
   // 带有明确示例 (Few-shot prompting) 的提示词
   const prompt = `你是一个专家级的计划员。你的工作是创建一个循序渐进的计划来回答用户的请求。
@@ -274,7 +201,7 @@ ${state.user_request}`;
 const executorNode = async (state: typeof PlanningStateAnnotation.State) => {
   console.log(chalk.cyan("--- 执行器 (EXECUTOR): 运行下一步... ---"));
   const plan = state.plan;
-  const nextStep = plan[0];
+  const nextStep = plan[0]!;
   
   // 使用健壮的正则来处理单引号和双引号
   const match = nextStep.match(/(\w+)\((?:"|')(.*?)(?:"|')\)/);
@@ -282,13 +209,13 @@ const executorNode = async (state: typeof PlanningStateAnnotation.State) => {
   let query = nextStep;
   
   if (match) {
-    toolName = match[1];
-    query = match[2];
+    toolName = match[1]!;
+    query = match[2]!;
   }
   
   console.log(chalk.blue(`--- 执行器 (EXECUTOR): 调用工具 '${toolName}'，查询 '${query}' ---`));
   
-  const result = await tavilySearchTool.invoke(query);
+  const result = await searchTool.invoke({query});
   
   // 我们创建 ToolMessage，现在的工具调用是非常安全的。
   const toolMessage = new ToolMessage({
@@ -341,12 +268,12 @@ const planningRouter = (state: typeof PlanningStateAnnotation.State) => {
 };
 
 const planningGraphBuilder = new StateGraph(PlanningStateAnnotation)
-  .addNode("plan", plannerNode)
+  .addNode("planner", plannerNode)
   .addNode("execute", executorNode)
   .addNode("synthesize", synthesizerNode)
-  .addEdge(START, "plan")
+  .addEdge(START, "planner")
   // 计划之后进行路由判断
-  .addConditionalEdges("plan", planningRouter)
+  .addConditionalEdges("planner", planningRouter)
   // 执行之后再次进行路由判断
   .addConditionalEdges("execute", planningRouter)
   .addEdge("synthesize", END);
@@ -360,6 +287,12 @@ console.log(chalk.green("计划型 Agent 已成功编译。"));
 让我们在同一个任务上运行我们全新的计划型 Agent，并将其执行流程和最终输出与反应式 Agent 进行比较。
 
 ```typescript
+const planCentricQuery = `
+查找法国、德国和意大利首都的人口。
+然后计算它们的总人口。
+最后，将该总人口与美国的人口进行比较，说明哪个更大。
+`;
+
 console.log(chalk.bold.green(`\n[在同一个查询上测试计划型 Agent]: '${planCentricQuery}'\n`));
 
 // 初始状态输入
@@ -388,52 +321,93 @@ console.log(finalPlanningOutput.final_answer);
 为了使我们的比较更加规范，我们将使用“LLM 作为评委 (LLM-as-a-Judge)” 对两个 Agent 进行打分，重点关注它们解决问题过程的质量和效率。
 
 ```typescript
+// 修改plan Agent的类型，记录下原始plan
+const PlanningStateAnnotation = Annotation.Root({
+  // ...
+  original_plan: Annotation<string[]>, // 保留完整计划供事后评估
+  plan: Annotation<string[]>({
+    reducer: (state, update) => update, // 覆盖更新计划数组
+  }),
+})
+
+const plannerNode = async (state: typeof PlanningStateAnnotation.State) => {
+  // ...
+  return { plan: planResult.steps, original_plan: planResult.steps }
+}
+```
+
+```typescript
 // 定义评估 Agent 解决问题过程的数据模式
 const ProcessEvaluationSchema = z.object({
-  task_completion_score: z.number().describe("1-10分，评价 Agent 是否成功完成了任务。"),
-  process_efficiency_score: z.number().describe("1-10分，评价 Agent 过程的效率和直接性。分数越高意味着路径越符合逻辑，绕弯路越少。"),
-  justification: z.string().describe("对分数的简短证明/理由。")
-});
+  task_completion_score: z
+    .number()
+    .describe('1-10分，评价 Agent 是否成功完成了任务。'),
+  process_efficiency_score: z
+    .number()
+    .describe(
+      '1-10分，评价 Agent 过程的效率和直接性。分数越高意味着路径越符合逻辑，绕弯路越少。',
+    ),
+  justification: z.string().describe('对分数的简短证明/理由。'),
+})
 
-const judgeLlm = llm.withStructuredOutput(ProcessEvaluationSchema);
+const judgeLlm = llm.withStructuredOutput(ProcessEvaluationSchema, {
+  method: 'jsonMode',
+})
 
 const evaluateAgentProcess = async (query: string, finalState: any) => {
-  let trace = "";
-  
+  let trace = ''
+
   // 如果是 ReAct Agent，轨迹保存在 'messages' 中；如果是 Planning，则在 'intermediate_steps'
   if (finalState.messages) {
     trace = finalState.messages
-      .map((m: any) => `${m._getType()}: ${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}`)
-      .join("\n");
+      .map(
+        (m) =>
+          `${m.type}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`,
+      )
+      .join('\n')
   } else {
-    trace = `计划内容: ${JSON.stringify(finalState.plan || [])}\n中间步骤: ${JSON.stringify(finalState.intermediate_steps || [])}`;
+    trace = `计划内容: ${JSON.stringify(finalState.original_plan || [])}\n中间步骤: ${JSON.stringify(finalState.intermediate_steps || [])}\n最终答案: ${finalState.final_answer || '未生成'}`
   }
-        
+
   const prompt = `你是一个人工智能 Agent 的专家评委。请以 1-10 分的等级评估该 Agent 解决任务的过程。
 重点关注该过程是否合乎逻辑且高效。
+请严格按照以下 JSON 格式返回你的评估结果，不要包含任何其他多余文本：
+{
+  "task_completion_score": <number>,
+  "process_efficiency_score": <number>,
+  "justification": <string>
+}
     
 **用户的任务:** ${query}
 **Agent 完整执行轨迹:**
 \`\`\`
 ${trace}
 \`\`\`
-`;
-  return await judgeLlm.invoke(prompt);
-};
+`
+  return await judgeLlm.invoke(prompt)
+}
 
-console.log(chalk.bold("\n--- 评估反应式 Agent (ReAct) 的过程 ---"));
-const reactAgentEvaluation = await evaluateAgentProcess(planCentricQuery, finalReactOutput);
-console.dir(reactAgentEvaluation, { depth: null });
+console.log(chalk.bold('\n--- 评估反应式 Agent (ReAct) 的过程 ---'))
+const reactAgentEvaluation = await evaluateAgentProcess(
+  planCentricQuery,
+  finalReactOutput,
+)
+console.dir(reactAgentEvaluation, { depth: null })
 
-console.log(chalk.bold("\n--- 评估计划型 Agent (Planning) 的过程 ---"));
-const planningAgentEvaluation = await evaluateAgentProcess(planCentricQuery, finalPlanningOutput);
-console.dir(planningAgentEvaluation, { depth: null });
+console.log(chalk.bold('\n--- 评估计划型 Agent (Planning) 的过程 ---'))
+const planningAgentEvaluation = await evaluateAgentProcess(
+  planCentricQuery,
+  finalPlanningOutput,
+)
+console.dir(planningAgentEvaluation, { depth: null })
 ```
 
 **对输出的讨论：**
 评委的分数量化了两种方法之间的差异。两个 Agent 都有可能获得很高的 `task_completion_score` (任务完成分)，因为它们最终都能找到答案。但是，**计划型 Agent** 将获得明显更高的 `process_efficiency_score` (流程效率分)。评委的理由会强调，与其像 ReAct Agent 那样步步为营的探索性过程相比，前期计划是解决问题更直接、更合乎逻辑的方法。
 
 这项评估证实了我们的假设：对于解决方案路径可以预测的问题，计划 (Planning) 架构提供了一种更结构化、透明且高效的方法。
+
+> 译者注：其实我跑了一下明显ReAct的评分明显更高，原文ipynb我看了一下也是ReAct评分更高，有点疑惑为什么原文这样写
 
 ## 结论
 
